@@ -57,54 +57,97 @@ class Enlace:
         self.callback = callback
 
     def enviar(self, datagrama):
-        # TODO: Preencha aqui com o código para enviar o datagrama pela linha
-        # serial, fazendo corretamente a delimitação de quadros e o escape de
-        # sequências especiais, de acordo com o protocolo CamadaEnlace (RFC 1055).
-        """
-        Envia o datagrama pela linha serial, aplicando a delimitação de quadros
-        e o escape de sequências especiais, conforme o protocolo CamadaEnlace (RFC 1055).
-        """
-        # Etapa 2
-        # Escapa sequências especiais
-        datagrama = datagrama.replace(b'\xdb', b'\xdb\xdd')
-        datagrama = datagrama.replace(b'\xc0', b'\xdb\xdc')
-        # Etapa 1
-        # Adiciona os delimitadores de quadro
-        quadro = b'\xc0' + datagrama + b'\xc0'
-        
-        # Envia o quadro pela linha serial
-        self.linha_serial.enviar(quadro)
+
+        escaped_bytes = []
+
+        ESCAPE_BYTE = 0xDB
+        ESCAPED_DB = 0xDD
+        ESCAPED_C0 = 0xDC
+        FRAME_DELIMITER = 0xC0
+
+        for byte in datagrama:
+            if byte == ESCAPE_BYTE:
+                escaped_bytes.append(ESCAPE_BYTE)
+                escaped_bytes.append(ESCAPED_DB)
+            elif byte == FRAME_DELIMITER:
+                escaped_bytes.append(ESCAPE_BYTE)
+                escaped_bytes.append(ESCAPED_C0)
+            else:
+                escaped_bytes.append(byte)
+
+        frame = [FRAME_DELIMITER] + escaped_bytes + [FRAME_DELIMITER]
+
+        self.linha_serial.enviar(bytes(frame))
+
+
 
     def __raw_recv(self, dados):
-        """
-        Processa os dados recebidos da linha serial, aplicando as regras de
-        desescapamento e reconstruindo quadros antes de passá-los para a camada superior.
-        """
+        # Constants for special bytes
+        FRAME_DELIMITER = 0xC0
+        ESCAPE_BYTE = 0xDB
+        ESCAPED_C0 = 0xDC
+        ESCAPED_DB = 0xDD
 
-        # Passo 3
+        # Initialize buffer and escape flag
         for byte in dados:
-            if byte == 0xC0:
-                # Delimitador de fim de quadro
-                if self.buffer:
-                    # Passo 5
-                    try:
-                        self.callback(self.buffer)
-                    except Exception:
-                        import traceback
-                        traceback.print_exc()
-                    finally:
-                        self.buffer = b''
-            elif byte == 0xDB:
-                # Passo 4
-                # Início de sequência de escape
-                self.escapando = True
+            if byte == FRAME_DELIMITER:
+                self._handle_frame_delimiter()
+            elif byte == ESCAPE_BYTE:
+                self._start_escape_sequence()
             elif self.escapando:
-                # Tratamento de byte escapado
-                if byte == 0xDC:
-                    self.buffer += b'\xc0'
-                elif byte == 0xDD:
-                    self.buffer += b'\xdb'
-                self.escapando = False
+                self._handle_escape(byte)
             else:
-                # Byte normal, adiciona ao buffer
-                self.buffer += bytes([byte])
+                self._add_to_buffer(byte)
+
+
+
+
+    def _handle_frame_delimiter(self):
+        """
+        Handles the frame delimiter byte.
+        """
+        if self.buffer:
+            self._process_buffer()
+            self.buffer = b''  # Clear the buffer
+    
+    def _process_buffer(self):
+        """
+        Processes the buffer by calling the registered callback with the buffer data.
+        """ 
+        try:
+            self.callback(self.buffer)
+        except Exception:
+            import traceback
+            traceback.print_exc()
+
+    def _start_escape_sequence(self):
+        """
+        Starts the escape sequence processing.
+        """
+        self.escapando = True
+
+    def _handle_escape(self, byte):
+        ESCAPED_C0 = 0xDC
+        ESCAPED_DB = 0xDD
+
+        if byte == ESCAPED_C0:
+            self.buffer += b'\xc0'
+        elif byte == ESCAPED_DB:
+            self.buffer += b'\xdb'
+        else:
+            # If the byte is not part of a valid escape sequence, treat it as regular data
+            self.buffer += bytes([ESCAPE_BYTE, byte])
+        
+        # Reset escaping flag after processing the escape sequence
+        self.escapando = False
+
+    def _add_to_buffer(self, byte):
+        """
+        Adds a regular byte to the buffer.
+        """
+        self.buffer += bytes([byte])
+
+
+
+    
+
